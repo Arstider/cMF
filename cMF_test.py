@@ -790,59 +790,14 @@ def prepare_cf(molecule, unrestrict, n=None, FCI=False):
 
     elif molecule < -5 and molecule > -20:
 
-
         """
         Neon-like atoms
         """
         mol=gto.M()
         mol.atom=[]
 
-
-        # if molecule == -6:
-        #     mol.atom.append([10,(0.0,0.0,0.0)])
-
-        #     if True:
-        #          mol.basis='cc-pvdz'
-        #         # mol.basis={'Ne': gto.basis.parse('''
-        #         # Ne    S
-        #         #     1.788000E+04           7.380000E-04          -1.720000E-04           0.000000E+00
-        #         #     2.683000E+03           5.677000E-03          -1.357000E-03           0.000000E+00
-        #         #     6.115000E+02           2.888300E-02          -6.737000E-03           0.000000E+00
-        #         #     1.735000E+02           1.085400E-01          -2.766300E-02           0.000000E+00
-        #         #     5.664000E+01           2.909070E-01          -7.620800E-02           0.000000E+00
-        #         #     2.042000E+01           4.483240E-01          -1.752270E-01           0.000000E+00
-        #         #     7.810000E+00           2.580260E-01          -1.070380E-01           0.000000E+00
-        #         #     1.653000E+00           1.506300E-02           5.670500E-01           0.000000E+00
-        #         #     4.869000E-01          -2.100000E-03           5.652160E-01           1.000000E+00
-        #         # Ne    P
-        #         #     2.839000E+01           4.608700E-02           0.000000E+00
-        #         #     6.270000E+00           2.401810E-01           0.000000E+00
-        #         #     1.695000E+00           5.087440E-01           0.000000E+00
-        #         #     4.317000E-01           4.556600E-01           1.000000E+00
-        #         # ''')}
-        #     else:
-                
-                # mol.basis={'Ne': gto.basis.parse('''
-                # Ne    S
-                #     1.788000E+04           7.380000E-04          -1.720000E-04           0.000000E+00
-                #     2.683000E+03           5.677000E-03          -1.357000E-03           0.000000E+00
-                #     6.115000E+02           2.888300E-02          -6.737000E-03           0.000000E+00
-                #     1.735000E+02           1.085400E-01          -2.766300E-02           0.000000E+00
-                #     5.664000E+01           2.909070E-01          -7.620800E-02           0.000000E+00
-                #     2.042000E+01           4.483240E-01          -1.752270E-01           0.000000E+00
-                #     7.810000E+00           2.580260E-01          -1.070380E-01           0.000000E+00
-                #     1.653000E+00           1.506300E-02           5.670500E-01           0.000000E+00
-                #     4.869000E-01          -2.100000E-03           5.652160E-01           1.000000E+00
-                # Ne    P
-                #     2.839000E+01           4.608700E-02           0.000000E+00
-                #     6.270000E+00           2.401810E-01           0.000000E+00
-                #     1.695000E+00           5.087440E-01           0.000000E+00
-                #     4.317000E-01           4.556600E-01           1.000000E+00
-                # Ne    D
-                #     2.202000E+00           1.0000000
-                # ''')}
-
         if molecule < -5:
+
             n=-7-molecule
             mol.atom.append([10+n,(0.0,0.0,0.0)])
             # print(n)
@@ -854,14 +809,17 @@ def prepare_cf(molecule, unrestrict, n=None, FCI=False):
             print(f"Using {mol.basis}")
         
         mol.unit = 'ang'
-        # mol.unit = 'au'
         mol.build()
-        # print(f"Charge in the atom {mol.charge}") 
-        #TODO corrections for trial
+        
+        # doing the Hartree Fock calculation and getting the orbital matrix
         mf = scf.RHF(mol).run()
         orbital_matrix=mf.mo_coeff
-        # print("Orbital Matrix: ",orbital_matrix[:,:4])
-                      
+
+        # doing CAS calculation and getting the orbital matrix from there
+        cascal=mf.CASSCF(8,8)
+        cascal.kernel()
+        dmcas=cascal.make_rdm1()
+
         if FCI:
             if VERBOSE:
                 print(f"Computing FCI for comparison")
@@ -1015,6 +973,7 @@ def prepare_cf(molecule, unrestrict, n=None, FCI=False):
 
 
     return cf, U, cf0, S, ic0, N, M, mol, mf
+
 
 
 def get_ints(molecule, mol, mf, cf, cf0, ic0):
