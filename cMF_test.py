@@ -218,7 +218,8 @@ def auto_cluster(mol, val_N=0):
     for i in range(len(nctr)):
         for _ in range(nctr[i]):
             xbs = np.hstack((xbs, xbst[i]))
-            atm = np.hstack((atm, mol._bas[i, 0]))
+
+    atm = np.hstack((atm, mol._bas[i, 0]))
     xbs = np.array([int(x) for x in xbs])
     atm = np.array([int(x) for x in atm])
 
@@ -236,7 +237,6 @@ def auto_cluster(mol, val_N=0):
         x+= 2*xbs[i]+1
 
     return act_orb
-
 
 def prepare_cf(molecule, unrestrict, n=None, FCI=False):
 
@@ -788,21 +788,20 @@ def prepare_cf(molecule, unrestrict, n=None, FCI=False):
             print("Initial Orbitals:")
             print(cf)
 
-    elif molecule < -5 and molecule > -20:
-
+    elif molecule < -5 and molecule > -16:
+ 
         """
         Neon-like atoms
         """
         mol=gto.M()
         mol.atom=[]
 
-        if molecule < -5:
-
-            n=-7-molecule
-            mol.atom.append([10+n,(0.0,0.0,0.0)])
-            # print(n)
-            mol.charge =+n 
-            mol.basis='cc-pvtz'
+        n=-7-molecule    # (-7-molecule) here -7 signifies neon atom
+        mol.atom.append([10+n,(0.0,0.0,0.0)])
+        # print(n)
+        mol.charge =+n 
+        mol.basis='cc-pvdz'
+        mol.symmetry=True
 
 
         if VERBOSE:
@@ -813,13 +812,21 @@ def prepare_cf(molecule, unrestrict, n=None, FCI=False):
         
         # doing the Hartree Fock calculation and getting the orbital matrix
         mf = scf.RHF(mol).run()
-        orbital_matrix=mf.mo_coeff
+        orb_mat=mf.mo_coeff
 
         # doing CAS calculation and getting the orbital matrix from there
         cascal=mf.CASSCF(8,8)
         cascal.kernel()
         dmcas=cascal.make_rdm1()
 
+        S=mol.intor('int1e_ovlp')
+        val, vec = sl.eigh(S)
+        S_ = vec.dot(np.diag(np.sqrt(val))).dot(vec.T)
+        rho_S=S_.dot(dmcas).dot(S_)
+        val,vec=sl.eigh(rho_S)
+        a=np.where(np.real(val)>1.95)[0]
+        
+        cas_orbmat=cascal.mo_coeff
         if FCI:
             if VERBOSE:
                 print(f"Computing FCI for comparison")
@@ -839,141 +846,53 @@ def prepare_cf(molecule, unrestrict, n=None, FCI=False):
         
         cf0=np.zeros((nb,no)) # in case of just atom use nb,norb
         nb, no = cf0.shape
-
         act_orb=auto_cluster(mol)
 
-        cf0[:,0]=orbital_matrix[:,0]
-        for i,j in enumerate(act_orb):
-            cf0[j,i+1]=1
-   
-        # print(cf0[:,:3])
-        # print(cf0[:,3:])
+        id_orb=np.zeros_like(cas_orbmat[:,:9])
+        id_orb[:,0]=cas_orbmat[:,0]
+        for j,i in enumerate(act_orb):
+            id_orb[i,j+1]=1
         
-        
-        # cf1=np.zeros_like(cf0)
-        # cf1[:,0]=orbital_matrix[:,0]        
-        # cf1[1,1]=1
-        # cf1[2,2]=1
-        # cf1[3,3]=1
-        # cf1[6,4]=1
-        # cf1[4,5]=1
-        # cf1[7,6]=1
-        # cf1[5,7]=1
-        # cf1[8,8]=1
-        
-        # print(cf1[:,:3])
-        # print(cf1[:,3:])
-        # print(cf0==cf1)
-        
+        #Projection of Hartree Fock orbitals into CAS space
+        P=cas_orbmat[:,1:9]@cas_orbmat[:,1:9].T@S
+        P_orb=P.dot(id_orb)
+        P_orb[:,0]=id_orb[:,0]
 
-
-        if VERBOSE > 2:
-            print("Ideal Orbitals:")
-            print(cf0)
-
-        S = mol.intor_symmetric("int1e_ovlp")
+        #P_orb=P.dot(orb_mat[:,:9])
+        #P_orb[:,0]=cas_orbmat[:,0]
         
-        #projection
-        P=np.eye(nb)-cf0[:,0:1]@cf0[:,0:1].T@S
-        P_cf0=P@cf0[:,1:]
         
-        M = np.dot(P_cf0.T, np.dot(S, P_cf0))
+        on=np.dot(P_orb.T,np.dot(S,P_orb))
+         
+        val,vec=sl.eigh(on)
+        s_hlf=vec.dot(np.dot(np.diag(np.sqrt(1./val)),vec.T))
+        on_porb=P_orb.dot(s_hlf)
         
-        val, vec = sl.eigh(-M)
-        U = np.dot(vec * 1.0 / np.sqrt(-val), vec.T)
-        
-        cf = np.dot(P_cf0, U)
-        
+        cf0=on_porb
+        #print(on_porb[:,:9]) 
+        #cf0[:,0]=on_porb[:,0]
+        #for i,j in enumerate(act_orb):
+        #    cf0[:,j]=on_porb[:,i+1]
+        #print(act_orb) 
+       
+        #print(cf0[:,:9])
+        #raise
 
-        N, M = no-1,no-1
-        U = np.eye(M)
-        
-        ic0 = 1
-        # mf.mo_coeff=np.hstack((cf0[:,:ic0],cf))
+        M=np.dot(cf0[:,1:].T,np.dot(S,cf0[:,1:]))
 
-        cascal=mf.CASSCF(8,8)
-        cascal.kernel()
-        dmcas=cascal.make_rdm1()
-        # print(S)
-        # print(dmcas.shape)
-        # print(dmcas@S)
+        val,vec=sl.eigh(-M)
+        U=vec.dot(np.dot(np.diag(np.sqrt(1./(-val))),vec.T))
 
-        rho_s=dmcas@S
-        val,vec=sl.eig(rho_s)
-        a = np.where(np.real(val) > 1.95)[0]
-        print(np.real(vec[:,a]))
-        print("+"*60)
-        print(np.real(val[a]))
-        # raise
-        if VERBOSE > 1:
-            print("Initial Orbitals:")
-            print(cf)
+        cf=np.dot(cf0[:,1:],U)
+        N,M=no-1,no-1
+        U=np.eye(M)
+        print(cf)
+        print(cf.shape)
+        print(sl.det(cf.T.dot(S).dot(cas_orbmat[:,1:9])))
 
-    elif molecule <-20:
-
-        "Dimer Trimer and so on calculations"
-        if n == None:
-            n = 2
-        dis =3.0
-
-        mol=gto.M()
-        mol.atom=[]
-        if molecule == -7:
-            #mol.atom.append([10,(0.,0.,0.)])
-            for i in range(n):
-                mol.atom.append([10,(i*dis,0.,0.)])
-        
-        mol.unit='ang'
-        if True:
-            mol.basis={'Ne': gto.basis.parse('''
-            Ne    S
-                1.788000E+04           7.380000E-04          -1.720000E-04           0.000000E+00
-                2.683000E+03           5.677000E-03          -1.357000E-03           0.000000E+00
-                6.115000E+02           2.888300E-02          -6.737000E-03           0.000000E+00
-                1.735000E+02           1.085400E-01          -2.766300E-02           0.000000E+00
-                5.664000E+01           2.909070E-01          -7.620800E-02           0.000000E+00
-                2.042000E+01           4.483240E-01          -1.752270E-01           0.000000E+00
-                7.810000E+00           2.580260E-01          -1.070380E-01           0.000000E+00
-                1.653000E+00           1.506300E-02           5.670500E-01           0.000000E+00
-                4.869000E-01          -2.100000E-03           5.652160E-01           1.000000E+00
-            Ne    P
-                2.839000E+01           4.608700E-02           0.000000E+00
-                6.270000E+00           2.401810E-01           0.000000E+00
-                1.695000E+00           5.087440E-01           0.000000E+00
-                4.317000E-01           4.556600E-01           1.000000E+00
-            ''')}
-        else:
-            mol.basis={'Ne': gto.basis.parse('''
-            Ne    S
-                1.788000E+04           7.380000E-04          -1.720000E-04           0.000000E+00
-                2.683000E+03           5.677000E-03          -1.357000E-03           0.000000E+00
-                6.115000E+02           2.888300E-02          -6.737000E-03           0.000000E+00
-                1.735000E+02           1.085400E-01          -2.766300E-02           0.000000E+00
-                5.664000E+01           2.909070E-01          -7.620800E-02           0.000000E+00
-                2.042000E+01           4.483240E-01          -1.752270E-01           0.000000E+00
-                7.810000E+00           2.580260E-01          -1.070380E-01           0.000000E+00
-                1.653000E+00           1.506300E-02           5.670500E-01           0.000000E+00
-                4.869000E-01          -2.100000E-03           5.652160E-01           1.000000E+00
-            Ne    P
-                2.839000E+01           4.608700E-02           0.000000E+00
-                6.270000E+00           2.401810E-01           0.000000E+00
-                1.695000E+00           5.087440E-01           0.000000E+00
-                4.317000E-01           4.556600E-01           1.000000E+00
-            Ne     D
-                2.202000E+00           1.0000000
-            ''')}
-        
-        if VERBOSE:
-            print(f"Using {mol.basis}")
-        mol.build()
-
-        mf=scf.RHF(mol).run()
-        orb_mat=lo.Boys(mol).kernel(mf.mo_coeff[:,:mol.nelectron//2])
-        print(orb_mat)
-
+        ic0=1
 
     return cf, U, cf0, S, ic0, N, M, mol, mf
-
 
 
 def get_ints(molecule, mol, mf, cf, cf0, ic0):
@@ -3037,12 +2956,9 @@ def PT(n,eri,i1s,Cmap,D,Norb,nclus,nstat,anti,parity,inter):
 
 
 def driver():
-    a=int(input("molecule ::\t"))
-    for x in range(-15,-5):
-        molecule = x
-        if x != -a :
-            continue
-
+    for x in range(-7,-5):
+        if x!=-7:
+            break
         molecule = x
         n=None
         if False:
@@ -3102,8 +3018,6 @@ def driver():
         if VERBOSE > 1:
             print("Preparing Orbitals")
         cf, U, cf0, S, ic0, N, M, mol, mf = prepare_cf(molecule,unrestrict,n=n,FCI=False)
-        
-        print(cf) #Printing orbital here
         
         nclus = M*2//Norb
         
